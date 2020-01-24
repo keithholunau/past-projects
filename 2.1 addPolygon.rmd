@@ -1,0 +1,517 @@
+---
+title: "Federal Election 2019"
+author: "Keith Au"
+date: "11/26/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = "center", fig.width = 5, fig.height = 5)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(leaflet)
+library(rgdal)
+library(sp)
+library(zoo)
+library(stargazer)
+library(pander)
+library(formattable)
+
+```
+
+## Canadian Federal Election 2019 
+The Canadian Election 2019 was held on the 21st of October 2019 in order to elect the representatives for the 43rd parliament in Ottawa. This election was said to be one of the most devisive and nasty campaign in recent Canadian history. In this article we will examine the recent result and the change in the political landscape in Ottawa.
+
+In this article, we will be using data provided by Elections Canada. 
+
+The following graph shows the election results form the 43rd Federal election:
+
+
+```{r, include = F, echo = F}
+##data import and cleaning
+result = read.csv("C:\\Users\\Keith\\OneDrive\\Documents\\R projects\\raw data\\election result 2019.csv")
+
+result = result %>%
+  rename("candidate"=ï..Candidate)
+
+result$Result = as.character(result$Result)
+result$Result[result$Result==""] = "other"
+
+result$province = NA
+result$riding = NA
+
+for (i in 1:nrow(result)){
+  if (result$Result[i]=="other"){
+    result$riding[i]=paste0(result$candidate[i])
+  }else{
+    result$riding[i]=""
+  }
+}
+
+for (i in 1:nrow(result)){
+  if (str_detect(result$riding[i], pattern = "Province*")){
+    result$province[i]=result$riding[i]
+  }else{
+    result$province[i]=""
+  }}
+
+for (i in 1:nrow(result)){
+  if (str_detect(result$riding[i],pattern ="Constituency*|Province*")){
+    result$riding[i] = result$riding[i]
+  }else{
+    result$riding[i] = NA}}
+
+result$province[result$province==""] = NA
+
+result$riding = na.locf(result$riding, na.rm = F)
+result$province = na.locf(result$province, na.rm = F)
+
+result=result %>%
+  filter(Result != "other") %>%
+  select(-(Occupation))
+
+result = result %>%
+  separate(riding, into = c("garbage","riding"), sep = "\">")
+result = result %>%
+  separate(riding, into = c("riding", "garbage2"), sep = "<") %>%
+  select(-(garbage), -(garbage2)) %>%
+  separate(province, into = c("garbage3","province"), sep = ":") %>%
+  select(-(garbage3))
+
+result$province = str_trim(result$province, side=c("left"))
+result$Votes = as.character(result$Votes)
+result$Votes = as.numeric(result$Votes)
+
+result$riding = str_replace_all(result$riding, pattern = "Montmagny--Lâ€™Islet--Kamouraska--RiviÃ¨re-du-Loup", replacement = "Montmagny--L'Islet--Kamouraska--RiviÃ¨re-du-Loup") 
+
+result$riding = str_replace_all(result$riding, pattern = "Beauport--CÃ´te-de-BeauprÃ©--ÃŽle Dâ€™OrlÃ©ans--Charlevoix", replacement = "Beauport--CÃ´te-de-BeauprÃ©--ÃŽle dâ€™OrlÃ©ans--Charlevoix")
+```
+
+```{r, include = F, echo = F}
+##importing shape file
+map_can=readOGR("C:\\Users\\Keith\\OneDrive\\Documents\\R projects\\raw data\\federal_electoral_districts_boundaries_2015_shp_en")
+map_can=spTransform(map_can,CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
+
+##merging cleaned dataset with shp file 
+win=result %>%
+  filter(Result == "Elected") %>%
+  rename("ENNAME" = riding)
+
+win_map= sp::merge(map_can,win, by="ENNAME")
+
+##creating colour scheme for the polygons
+partycolour = colorFactor( c("Blue","Red","Green","Orange","Purple","Black"),
+                          levels = c("Conservative Party of Canada","Liberal Party of Canada", "Green Party of Canada","New Democratic Party","Bloc QuÃ©bÃ©cois","Independent"))
+
+##creating the interactive map
+win_graph = win_map %>%
+  leaflet() %>%
+  addTiles("Grey") %>%
+  addPolygons(weight = 1,
+              label = ~paste0(ENNAME),
+              highlight = highlightOptions(weight = 2,
+                                           color = "White",
+                                           bringToFront = T),
+              color = ~partycolour(Political.Party),
+              popup = ~paste0("<b>",ENNAME,"<b>","</br>",
+                              "Elected MP:", candidate,"</br>", 
+                              "Party:", Political.Party),
+              opacity = 1,
+              fillOpacity = 0.5)
+```
+
+### 2019 Election
+```{r,fig.align='center', echo = F}
+win_graph
+```
+
+```{r, include = F, echo = F}
+result_2015 = readRDS("C:\\Users\\Keith\\OneDrive\\Documents\\Academic\\SFU\\Courses\\Spring 2019\\Pol 339\\data sets\\Canada datasets\\raw data\\Fed election 2015.rds")
+
+result_2015 = result_2015 %>%
+  select(id, win.party, v.rank1) %>%
+  rename("ENNAME" = "id")
+result_2015 = distinct(result_2015)
+
+og_name = c("Conservateur", "Libéral","NPD-Nouveau Parti démocratique","Parti Vert")
+new_name = c("Conservatives","Liberals","NDP","Green Party")
+
+for (k in 1:4){
+for (j in 1:nrow(result_2015)){
+    if (result_2015$win.party[j]==og_name[k]){
+      result_2015$win.party[j]=new_name[k]
+    }
+  }
+}
+
+result_2015 = result_2015 %>%
+  arrange(desc(ENNAME))
+win = win %>%
+  arrange(desc(ENNAME))
+
+for (i in 1:nrow(result_2015)){
+  result_2015$ENNAME[i]=win$ENNAME[i]
+}
+
+win_2015 = sp::merge(map_can, result_2015, by = "ENNAME")
+
+col2015=colorFactor(c("blue","red","orange","green","purple"),
+                    levels = c("Conservatives", "Liberals","NDP","Green Party","Bloc Québécois"))
+
+win_2015 %>%
+  leaflet() %>%
+  addTiles("Grey") %>%
+  addPolygons(weight = 1,
+              color = ~col2015(win.party),
+              highlight = highlightOptions(weight = 3,
+                                            color = "white",
+                                            bringToFront = T),
+              popup = ~paste0("<b>", ENNAME, "<b>","</br>",
+                              "Party: ", win.party),
+              opacity = 1,
+              fillOpacity = 0.5)
+```
+
+---
+
+### Overview
+One of the most obvious observation of this year's election result is in the Priaries, i.e. Alberta and Saskatwan, who voted overwhelmingly for the Convervative Party. Many argue that this is a clear message form the oil and gas producing provinces to the Liberal government and their policies in the past four years were less than welcomed. More interestingly yet, some argued the fact that the Convervative Party won the popular vote is a strong indication of the countries disapproval of the Liberal govenrment. This claim deserve further investigation. 
+
+Under the first past the post system, the extend of which public opinion is reflected in the polls is severely limited. It often require further examination into the result to determine the actual shift in public opinion. It might be true that the Prairies have elected to reject the Liberal government, however to claim that most of Canada disapprove the last administration is a bold statement and one must excercise caution when faced with such claim. 
+
+In order to examine the extend of public support of the government, we shall include the share of vote in our analysis. In that case we can have a better understanding of public opinion and determine whether the notion that most Canadians disapprove of the Liberal government is valid. 
+
+The following maps indicates whether the elected MP was elected with a majority in the last two elections. **The shaded riding indicate a victory by majorty.** Click on the riding to see the share of vote received by the MP elected:
+
+```{r, include = F, echo = F}
+##determining whether MP was elected with a majority 
+total = result %>%
+  group_by(riding) %>%
+  summarize(total = sum(Votes))
+win_maj=merge(win, total, by.x = "ENNAME", by.y = "riding")
+win_maj$share = NA
+win_maj$maj = NA
+for (i in 1:nrow(win_maj)){
+  win_maj$share[i] = round((win_maj$Votes[i]/win_maj$total[i])*100, digits=2)}
+
+for (i in 1:nrow(win_maj)){
+  if(win_maj$share[i]>50){
+    win_maj$maj[i] = paste0("Yes")
+  }else{
+    win_maj$maj[i] = paste0("No")
+  }
+}
+
+win_maj$maj = as.factor(win_maj$maj)
+##creating new SP object with the new information 
+win_maj_map = sp::merge(map_can,win_maj, by = "ENNAME")
+maj_col=colorFactor(c("grey","white"),
+                    levels = c("Yes","No"))
+```
+
+##### 2015 election
+```{r, include = T, echo = F}
+result_2015$maj = NA
+
+for (i in 1:nrow(result_2015)){
+  if (result_2015$v.rank1[i]>50){
+    result_2015$maj[i]="Yes"
+  }else{
+    result_2015$maj[i]="No"
+  }
+}
+
+maj_2015 = sp::merge(map_can, result_2015, by = "ENNAME")
+
+maj_2015 %>%
+  leaflet() %>%
+  addTiles("Grey") %>%
+  addPolygons(weight = 1,
+             color = ~maj_col(maj),
+             highlight = highlightOptions(weight = 3,
+                                          color = "white",
+                                          bringToFront = F),
+             popup = ~paste0("<b>",ENNAME,"<b>","</br>",
+                             "Party: ", win.party, "</br>",
+                             "majority: ", maj, "</br>",
+                             "vote share: ", v.rank1),
+             fillOpacity = 1) %>%
+  addPolylines(weight = 2,
+               color = ~col2015(win.party))
+```
+
+##### 2019 election
+```{r,include = T, echo = F}
+win_maj_map %>%
+  leaflet() %>%
+  addTiles("Grey") %>%
+  addPolygons(weight = 1, 
+              color = ~maj_col(maj),
+              highlight = highlightOptions(weight = 3,
+                               color = "white",
+                               bringToFront = F),
+              popup = ~paste0("<b>",ENNAME,"<b>","</br>",
+                              "Elected Candidate: ", candidate, "</br>",
+                              "Party: ", Political.Party,"</br>",
+                              "Vote Share: ", share, "%","</br>",
+                              "Majority: ", maj),
+              opacity = 1,
+              fillOpacity = 1)%>%
+  addPolylines(weight = 2,
+               color = ~partycolour(Political.Party))
+```
+
+
+```{r, include  = F}
+alberta = win_maj %>%
+  group_by(province) %>%
+  filter(province == "Alberta")
+paste0(alberta$ENNAME[alberta$maj == "No"])
+max(alberta$share)
+alberta_tb = alberta %>%
+  ungroup(province) %>%
+  select(ENNAME, candidate, share) %>%
+  arrange(desc(share)) %>%
+  rename("Riding" = "ENNAME", "Elected MP" = "candidate", "Vote Share" = "share" )
+```
+
+---
+
+### Observation
+
+##### **ALBERTA**
+When we include the vote share in our investigation, we can easily identify the obvious advantage that the conservatives has in the Prairies. Although the province of Alberta has long been a Conservative strong hold, the two major cities in the province - Edmonton and Calgary have always been a battle ground. 
+
+For instance, in the city of Edmonton, there was no majority winner in the 2015 election. Three hours south in the city of Calgary, which elected two Liberal MPs in 2015, was more Conseravtive, but there was still some significant division. Yet, in the 2019 election, not only did Edmonton elected entirely Conservative, with the exception of Edmonton Strathcona who voted for the NDP, only one of the Conservative MP was not voted in with a majority. Calgary's shift is even more pronounced, with the entire city going blue, and all with a majority.
+```{r, echo = F, include = F}
+##edmonton ggplot:geom_polygon 2015+2019
+##Calgary ggplot:geom_polygon 2015+2019
+gg=broom::tidy(map_can, region = "ENNAME")
+gg=gg%>%
+  rename("ENNAME" = "id")
+##2015 edmonton 
+edm_15 = right_join(gg, result_2015, by = "ENNAME")
+edm_15$maj = as.character(edm_15$maj)
+edm_15$maj = str_replace_all(edm_15$maj, pattern = "Yes", replacement = "1")
+edm_15$maj = str_replace_all(edm_15$maj, pattern = "No", replacement = "0")
+edm_15$maj = as.numeric(edm_15$maj)
+edm_15_map = 
+  ggplot(edm_15, aes(x=long, 
+                     y=lat, 
+                     group = group, 
+                     fill = win.party,
+                     color = "black1",
+                     alpha = maj))+
+  geom_polygon()+
+  scale_alpha(range = c(0.5, 1))+
+  theme_bw()+
+  theme(axis.title = element_blank(), axis.text = element_blank(),legend.position = "none")+
+  coord_cartesian(xlim=c(-113.8,-113.2),ylim=c(53.4,53.7))+
+  ggtitle("Edmonton 2015")+
+  scale_fill_manual(values = c("Purple","Blue","Green","Red","Orange"))
+```
+
+```{r,echo = F}
+edm_15_map
+```
+
+```{r, echo = F, include = F}
+##2019 edmonton 
+gg19 = right_join(gg,win_maj, by = "ENNAME")
+gg19$maj = as.character(gg19$maj)
+gg19$maj = str_replace_all(gg19$maj, pattern = "Yes", replacement = "1")
+gg19$maj = str_replace_all(gg19$maj, pattern = "No", replacement = "0")
+gg19$maj = as.numeric(gg19$maj)
+gg19_map = 
+  ggplot(gg19, aes(long,
+                    lat, 
+                    group = group, 
+                    fill = Political.Party,
+                    color = "white",
+                   alpha = maj))+
+  geom_polygon()+
+  scale_alpha(range = c(0.5, 1))+
+  theme_bw()+
+  theme(axis.title = element_blank(), axis.text = element_blank(), legend.position = "none")+
+  coord_cartesian(xlim=c(-113.8,-113.2),ylim=c(53.4,53.7))+
+  ggtitle("Edmonton 2019")+
+  scale_fill_manual(values = c("Purple","Blue","Green","Black","Red","Orange"))
+```
+
+```{r,include = T, echo = F}
+gg19_map
+```
+
+```{r, include = T, echo = F}
+##2015 Calgary
+(ggplot(edm_15, aes(x=long, 
+                     y=lat, 
+                     group = group, 
+                     fill = win.party,
+                     color = "Black",
+                    alpha = maj))+
+  geom_polygon()+
+  scale_alpha(range = c(0.5, 1))+
+  theme_bw()+
+  theme(axis.title = element_blank(), axis.text = element_blank(),
+        legend.position = "none")+
+  coord_cartesian(xlim=c(-114.45,-113.7),ylim=c(50.75,51.25))+
+  ggtitle("Calgary 2015")+
+  scale_fill_manual(values = c("Purple","Blue","Green","Red","Orange")))
+```
+
+```{r,include = T, echo = F}
+##2019 Calgary
+gg19_map_cal = 
+  ggplot(gg19, aes(long,
+                   lat, 
+                   group = group, 
+                   fill = Political.Party,
+                   color = "Black",
+                   alpha = maj))+
+  geom_polygon()+
+  scale_alpha(range = c(0.5, 1))+
+  theme_bw()+
+  theme(axis.title = element_blank(), axis.text = element_blank(),
+        legend.position = "none")+
+  coord_cartesian(xlim=c(-114.45,-113.7),ylim=c(50.75,51.25))+
+  ggtitle("Edmonton 2019")+
+  scale_fill_manual(values = c("Purple","Blue","Green","Black","Red","Orange"))
+
+gg19_map_cal
+```
+
+The following table provide a quick glimps of the vote share Alberta MP recieved in 2019:
+
+```{r, include = T, echo = F, fig.align='center'}
+formatorange = "#ffae1a"
+formatblue = "#0000cc"
+
+riding_formatter = formatter("Riding",
+                             style = Riding~style(color = ifelse(Riding == "Edmonton Strathcona", formatorange, formatblue)))
+formattable(alberta_tb,
+            align = c("l","c","c"), 
+            list('Riding' = (riding_formatter)))
+```
+
+##### **ATLANTIC CANADA**
+Another interesting observation is in Atlantic Canada. In 2015, the Liberals had a strong support in both Nova Scotia and Newfoundland that parallel the support the Conservatives enjoy in Alberta. These two provinces elected entirely for the Liberals with only two MPs elected without a majority. Fast forward to 2019, there is no mistaking that the Liberals have lost the support of Nova Scotians and Newfoundlanders evidented in the lack of any majority victory in both provinces - a far cry from the 2015 election. Although still overwhelmingly Liberal, the Conservatives are begining to gain ground in Nova Scotia. For instance, the riding of West Nova elected a Liberal MP with a 63% majority in 2015, but in only four years, they opted to elected a Conservative MP in 2019 instead. Such dramatic shift warrent in-depth investigation. 
+
+```{r, echo = F}
+##nova scotia ggplot::geom_polygon
+
+#2015 NS
+(NS15_map=
+ggplot(edm_15, aes(x=long, 
+                     y=lat, 
+                     group = group, 
+                     fill = win.party,
+                     color = "black1",
+                   alpha = maj))+
+  geom_polygon()+
+  scale_alpha(range = c(0.5,1))+
+  theme_bw()+
+  theme(axis.title = element_blank() ,axis.text = element_blank(), legend.position = "none")+
+  coord_cartesian(xlim=c(-67.5,-53),ylim=c(43.2,54))+
+  ggtitle("Nova Scotia 2015")+
+  scale_fill_manual(values = c("Purple","Blue","Green","Red","Orange")))
+```
+```{r, include = T, echo = F}
+(NS19_map=
+ggplot(gg19, aes(x=long, 
+                     y=lat, 
+                     group = group, 
+                     fill = Political.Party,
+                     color = "black1",
+                 alpha = maj))+
+  geom_polygon()+
+  scale_alpha(range = c(0.5,1))+
+  theme_bw()+
+  theme(axis.title = element_blank() ,axis.text = element_blank(), legend.position = "none")+
+  coord_cartesian(xlim=c(-67.5,-53),ylim=c(43.2,54))+
+  ggtitle("Nova Scotia 2019")+
+  scale_fill_manual(values = c("Purple","Blue","Green","Black","Red","Orange")))
+```
+
+##### **GREATER TORONTO AREA**
+On the other hand, the Liberals seem to have consolidated their support in the Greater Toronto Area. Already a Liberal stong hold, the liberals have gain more support from the ridings previously divided in 2015. However, under the FPTP system, advancing from a plurality to a majority victory is not rewarded under the current electoral system. 
+
+```{r,echo = F}
+##GTA ggplot::geom_polygon
+ 
+##GTA 15
+(GTA15_map=
+ggplot(edm_15, aes(x=long, 
+                     y=lat, 
+                     group = group, 
+                     fill = win.party,
+                     color = "black1",
+                   alpha = maj))+
+  geom_polygon()+
+  scale_alpha(range = c(0.5,1))+
+  theme_bw()+
+  theme(axis.title = element_blank(),axis.text = element_blank(),
+        legend.position = "none")+
+  coord_cartesian(xlim=c(-80,-78.5),ylim=c(43.2,44.3))+
+  ggtitle("Greater Toronto Area 2015")+
+  scale_fill_manual(values = c("Purple","Blue","Green","Red","Orange")))
+```
+
+```{r, include = T, echo = F}
+(GTA19_map=
+ggplot(gg19, aes(x=long, 
+                     y=lat, 
+                     group = group, 
+                     fill = Political.Party,
+                     color = "black1",
+                 alpha = maj))+
+  geom_polygon()+
+  scale_alpha(range = c(0.5,1))+
+  theme_bw()+
+  theme(axis.title = element_blank(),axis.text = element_blank(), legend.position = "none")+
+  coord_cartesian(xlim=c(-80,-78.5),ylim=c(43.2,44.3))+
+  ggtitle("Greater Toronto Area 2019")+
+  scale_fill_manual(values = c("Purple","Blue","Green","Black","Red","Orange")))
+```
+
+##### **GREATER VANCOUVER AREA**
+On the West coast, in Vancouver, which is already divided politically, sees the diminishing of majority victories. The only MP elected with a majority in 2019 is Jenny Kwan of East Vancouver compare to six in 2015. Another interesting note is that Elizabeth May, leader of the Green Party of Canada, lost her majority vote in her riding in 2019. Perhaps that contributed to her decision to step down as party leader. 
+
+```{r, echo = F}
+##Vancouver ggplot::geom_polygon
+
+##2015Van
+(GTA15_map=
+ggplot(edm_15, aes(x=long, 
+                     y=lat, 
+                     group = group, 
+                     fill = win.party,
+                     color = "black",
+                   alpha = maj))+
+  geom_polygon()+
+  scale_alpha(range = c(0.5,1))+
+  theme_bw()+
+  theme(axis.title = element_blank(), axis.text = element_blank(),
+        legend.position = "none")+
+  coord_cartesian(xlim=c(-123.5,-122.5),ylim=c(48.75,49.5))+
+  ggtitle("Greater Vancouver Area 2015")+
+  scale_fill_manual(values = c("Purple","Blue","Green","Red","Orange")))
+```
+
+```{r, include = T, echo = F}
+(GTA19_map=
+ggplot(gg19, aes(x=long, 
+                     y=lat, 
+                     group = group, 
+                     fill = Political.Party,
+                     color = "black1",
+                 alpha = maj))+
+  geom_polygon()+
+  scale_alpha(range = c(0.5,1))+
+  theme_bw()+
+  theme(axis.title = element_blank(),axis.text = element_blank(), legend.position = "none")+
+  coord_cartesian(xlim=c(-123.5,-122.5),ylim=c(48.75,49.5))+
+  ggtitle("Greater Vancouver Area 2019")+
+  scale_fill_manual(values = c("Purple","Blue","Green","Black","Red","Orange")))
+```
